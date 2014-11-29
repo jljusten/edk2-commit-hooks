@@ -56,11 +56,26 @@ class CheckMsg:
         if self.msg.find(cu_msg) < 0:
             self.msg_error('Missing Contributed-under! (Note: this must be added by the code contributor!)')
 
-    def make_sig_re(self, sig):
-        sig_to_re = sig.replace('-', r'[-\s]+')
-        re_str = '^(' + sig_to_re + r')(\s*):(\s*)(.+?)(?:\s*)$'
-        return re.compile(re_str, re.MULTILINE|re.IGNORECASE)
+    @staticmethod
+    def make_sig_re(sig, re_input=False):
+        if re_input:
+            sub_re = sig
+        else:
+            sub_re = sig.replace('-', r'[-\s]+')
+        re_str = r'^(?P<tag>' + sub_re + r')(\s*):(\s*)(?P<value>\S.*?)(?:\s*)$'
+        try:
+            return re.compile(re_str, re.MULTILINE|re.IGNORECASE)
+        except Exception:
+            print "Tried to compile re:", re_str
+            raise
 
+    sig_block_re = re.compile(r'''^
+                                      (?: (?P<tag>[^:]+) \s* : \s* (?P<value>\S.*?) )
+                                          |
+                                      (?: \[ (?P<updater>[^:]+) \s* : \s* (?P<note>.+?) \s* \] )
+                              \s* $''',
+                              re.VERBOSE | re.MULTILINE)
+ 
     def find_sigs(self, sig):
         if not sig.endswith('-by') and sig != 'Cc':
             sig += '-by'
@@ -118,8 +133,17 @@ class CheckMsg:
             self.msg_error('Invalid Signed-off-by format!')
             return
 
+    sig_types = (
+        'Reviewed',
+        'Reported',
+        'Tested',
+        'Suggested',
+        'Acked',
+        'Cc'
+        )
+
     def check_misc_sigs(self):
-        for sig in ('Reviewed', 'Acked', 'Cc'):
+        for sig in self.sig_types:
             self.find_sigs(sig)
 
     def check_overall_format(self):
@@ -143,11 +167,19 @@ class CheckMsg:
             if len(lines[i]) > 180:
                 self.msg_error('Line %d of commit message is too long.' % (i + 1))
 
-        for i in range(2, count):
-            l = lines[i].lower()
-            if l.startswith('contributed-under') or l.startswith('signed-off-by'):
-                if lines[i-1].strip() != '':
-                    self.msg_error('The line before the signature block should be empty')
+        last_sig_line = None
+        for i in range(count - 1, 0, -1):
+            line = lines[i]
+            mo = self.sig_block_re.match(line)
+            if mo is None:
+                if line.strip() == '':
+                    break
+                elif last_sig_line is not None:
+                    err2 = 'Add empty line before "%s"?' % last_sig_line
+                    self.msg_error('The line before the signature block should be empty', err2)
+                else:
+                    self.msg_error('The signature block was not found')
                 break
+            last_sig_line = line.strip()
 
 CheckMsg()
